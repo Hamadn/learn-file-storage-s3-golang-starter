@@ -90,6 +90,25 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspectRatio, err := getVideoAspectRatio(tmpFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get video aspect ratio", err)
+		return
+	}
+
+	processedVideo, err := processVideoForFastStart(tmpFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video for fast start", err)
+		return
+	}
+	procFile, err := os.Open(processedVideo)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create temp file for processed video", err)
+		return
+	}
+	defer os.Remove(procFile.Name())
+	defer procFile.Close()
+
 	_, err = tmpFile.Seek(0, io.SeekStart)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't seek to start of temp file", err)
@@ -108,12 +127,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	ext := strings.Split(mediaType, "/")[1]
 
-	fileName := fmt.Sprintf("%s.%s", randomString, ext)
+	var fileName string
+
+	if aspectRatio == "16:9" {
+		fileName = fmt.Sprintf("%s/%s.%s", "landscape", randomString, ext)
+	} else if aspectRatio == "9:16" {
+		fileName = fmt.Sprintf("%s/%s.%s", "portrait", randomString, ext)
+	} else {
+		fileName = fmt.Sprintf("%s/%s.%s", "other", randomString, ext)
+	}
 
 	s3Params := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
-		Body:        tmpFile,
+		Body:        procFile,
 		ContentType: &mediaType,
 	}
 
